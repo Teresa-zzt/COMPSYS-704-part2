@@ -238,7 +238,8 @@ static void startAcc() {
 
 static void readMag() {
 	uint8_t magStatus;
-	uint8_t magLSB, magMSB;	// variables to hold LSB and MSB
+	uint8_t magData[2];
+	uint8_t magMSB, magLSB;
 	int16_t magX_raw, magY_raw, magZ_raw;	// variables to hold combined LSB and MSB
 	int16_t magX_mg,magY_mg,magZ_mg; //in milli-Gauss
 	float mag_Conver_factor = 49.152 / 32768.0;
@@ -251,24 +252,18 @@ static void readMag() {
 		do {
 			BSP_LSM303AGR_ReadReg_Mag(STATUS_REG_M,&magStatus,1);
 		} while (!(magStatus & dataReadyBit));
-		// read LSB and MSB for X
-		BSP_LSM303AGR_ReadReg_Mag(OUTX_L_REG_M,&magLSB,1);
-		BSP_LSM303AGR_ReadReg_Mag(OUTX_H_REG_M,&magMSB,1);
-		// store in variable for X, combine LSB and MSB
-		magX_raw = (int16_t)(magMSB <<8 | magLSB);
+		// read for X
+		BSP_LSM303AGR_ReadReg_Mag(OUTX_L_REG_M,magData,2);
+		magX_raw = (int16_t)((magData[1] << 8) | magData[0]);
 		magX_mg = (int16_t)(magX_raw * mag_Conver_factor *1000);		// multiply by mag conversion unit in mg
 
-
-		// read LSB and MSB for Y
-		BSP_LSM303AGR_ReadReg_Mag(OUTY_L_REG_M,&magLSB,1);
-		BSP_LSM303AGR_ReadReg_Mag(OUTY_H_REG_M,&magMSB,1);
-		magY_raw = (int16_t)(magMSB <<8 | magLSB);
+		// read for Y
+		BSP_LSM303AGR_ReadReg_Mag(OUTY_L_REG_M,magData,2);
+		magY_raw = (int16_t)((magData[1] << 8) | magData[0]);
 		magY_mg = (int16_t)(magY_raw * mag_Conver_factor*1000);
-
-		// read LSB and MSB for Z
-		BSP_LSM303AGR_ReadReg_Mag(OUTZ_L_REG_M,&magLSB,1);
-		BSP_LSM303AGR_ReadReg_Mag(OUTZ_H_REG_M,&magMSB,1);
-		magZ_raw = (int16_t)(magMSB <<8 | magLSB);
+		// read for Z
+		BSP_LSM303AGR_ReadReg_Mag(OUTZ_L_REG_M,magData,2);
+		magZ_raw = (int16_t)((magData[1] << 8) | magData[0]);
 		magZ_mg = (int16_t)(magZ_raw * mag_Conver_factor*1000);
 
 		// Accumulate the readings for averaging
@@ -291,10 +286,10 @@ static void readMag() {
 
 static void readAcc() {
 	uint8_t accStatus;
-	uint8_t accLSB, accMSB;
-	int16_t OUTX_NOST_A, OUTY_NOST_A, OUTZ_NOST_A;
+	uint8_t accData[2];
+	int16_t accX_raw, accY_raw, accZ_raw;
 	const float accFullScale = 2.0;
-	const float acc_Conver_factor = accFullScale / 32768.0; //(2^15 for 2^16)
+	const float acc_Conver_factor = accFullScale / 32768.0;
 	int16_t accX_mg, accY_mg, accZ_mg;
 //	int16_t accX_sum, accY_sum, accZ_sum;
   uint8_t dataReadyBit = 0x08;
@@ -305,24 +300,21 @@ static void readAcc() {
 
 	// for (int i=0; i<sampleNumber; i++){
 	// For ACC X
-	BSP_LSM303AGR_ReadReg_Acc(OUT_X_L_A,&accLSB,1);
-	BSP_LSM303AGR_ReadReg_Acc(OUT_X_H_A,&accMSB,1);
+	BSP_LSM303AGR_ReadReg_Acc(OUT_X_L_A,accData,2);
 	// shift MSB to the left
-	OUTX_NOST_A = (int16_t)(accMSB <<8 | accLSB);
+	accX_raw = (int16_t)((accData[1] <<8) | accData[0]);
 	// multiply by factor to get +-2g.
-	accX_mg = (int16_t)(OUTX_NOST_A * acc_Conver_factor *1000);
+	accX_mg = (int16_t)(accX_raw * acc_Conver_factor *1000);
 
 	// For ACC Y
-	BSP_LSM303AGR_ReadReg_Acc(OUT_Y_L_A,&accLSB,1);
-	BSP_LSM303AGR_ReadReg_Acc(OUT_Y_H_A,&accMSB,1);
-	OUTY_NOST_A = (int16_t)(accMSB <<8 | accLSB);
-	accY_mg = (int16_t)(OUTY_NOST_A * acc_Conver_factor *1000);
+	BSP_LSM303AGR_ReadReg_Acc(OUT_Y_L_A,accData,2);
+	accY_raw = (int16_t)((accData[1] <<8) | accData[0]);
+	accY_mg = (int16_t)(accY_raw * acc_Conver_factor *1000);
 
 	// For ACC Z
-	BSP_LSM303AGR_ReadReg_Acc(OUT_Z_L_A,&accLSB,1);
-	BSP_LSM303AGR_ReadReg_Acc(OUT_Z_H_A,&accMSB,1);
-	OUTZ_NOST_A = (int16_t)(accMSB <<8 | accLSB);
-	accZ_mg = (int16_t)(OUTZ_NOST_A * acc_Conver_factor * 1000);
+	BSP_LSM303AGR_ReadReg_Acc(OUT_Z_L_A,accData,2);
+	accZ_raw = (int16_t)((accData[1] <<8) | accData[0]);
+	accZ_mg = (int16_t)(accZ_raw * acc_Conver_factor * 1000);
 
 	// Accumulate the readings for averaging
 	// accX_sum +=accX_mg;
@@ -338,7 +330,7 @@ static void readAcc() {
 	ACC_Value.y= accY_mg;
 	ACC_Value.z= accZ_mg;
 
-	//XPRINTF("Row ACC=%d,%d,%d\r\n",OUTX_NOST_A,OUTY_NOST_A,OUTZ_NOST_A);
+	//XPRINTF("Row ACC=%d,%d,%d\r\n",accX_raw,accY_raw,accZ_raw);
 	// print accelerometer value in milli-g
 	//XPRINTF("Converted ACC=%d,%d,%d mg\r\n",accX_mg,accY_mg,accZ_mg);
 }
@@ -393,7 +385,6 @@ int main(void)
   startMag();
   startAcc();
 
-  uint8_t BufferToWrite[10] = "ABCDE";
   //***************************************************
   //***************************************************
   //************ Initialise ends **********************
