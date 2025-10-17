@@ -45,10 +45,10 @@
 
 #include "SensorTile_bus.h"
 
-   
+
 /* Private typedef -----------------------------------------------------------*/
 
-  
+
 /* Private define ------------------------------------------------------------*/
 #define STATUS_REG_A 0x27
 #define CTRL_REG1_A 0x20
@@ -74,6 +74,13 @@
 #define OUTY_H_REG_M  0x6B
 #define OUTZ_L_REG_M  0x6C
 #define OUTZ_H_REG_M  0x6D
+
+
+#define PI 3.141592
+#define STEP_START_THRESHOLD 1100
+#define STEP_FINISH_THRESHOLD 900
+#define MAGNITUDE_THRESHOLD 0
+#define STRIDE_LENGTH 57
 
 /* Shutdown mode enabled as default for SensorTile */
 #define ENABLE_SHUT_DOWN_MODE 0
@@ -112,10 +119,10 @@
 extern uint8_t set_connectable;
 extern int connected;
 
-    
+
 /* BlueNRG SPI */
 extern SPI_HandleTypeDef SPI_SD_Handle;
-    
+
 extern volatile float RMS_Ch[];
 extern float DBNOISE_Value_Old_Ch[];
 extern uint16_t PCM_Buffer[];
@@ -145,6 +152,16 @@ uint32_t uhCCR4_Val = DEFAULT_uhCCR4_Val;
 uint32_t MagCalibrationData[5];
 uint32_t AccCalibrationData[7];
 uint8_t  NodeName[8];
+
+static int stepCount =0;			// check for static and just int
+bool stepDetected = false;
+bool stepCounted = false;
+float oldAccZ =900;
+//static float currentHeading =0;
+static int16_t initialHeading = -1;
+static float totalDistance =0.0;
+static float currentPositionX = 0.0;
+static float currentPositionY = 0.0;
 
 UART_HandleTypeDef UartHandle;
 
@@ -208,7 +225,7 @@ static void InitLSM() {
 
 
 static void startMag() {
-	uint8_t inData[10]; 
+	uint8_t inData[10];
 	// Follow the self test process
 	inData[0] = 0x8C; //10001100
 	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_A_M,inData,1);
@@ -239,14 +256,10 @@ static void startAcc() {
 static void readMag() {
 	uint8_t magStatus;
 	uint8_t magData[2];
-	uint8_t magMSB, magLSB;
 	int16_t magX_raw, magY_raw, magZ_raw;	// variables to hold combined LSB and MSB
 	int16_t magX_mg,magY_mg,magZ_mg; //in milli-Gauss
 	float mag_Conver_factor = 49.152 / 32768.0;
-	// int16_t magX_sum, magY_sum, magZ_sum;
 
-	// // collect 5 samples and get average
-	// for (int i=0; i< sampleNumber; i++){
 		// check until ZYXDA bit is ready
     uint8_t dataReadyBit = 0x08;
 		do {
@@ -266,22 +279,13 @@ static void readMag() {
 		magZ_raw = (int16_t)((magData[1] << 8) | magData[0]);
 		magZ_mg = (int16_t)(magZ_raw * mag_Conver_factor*1000);
 
-		// Accumulate the readings for averaging
-		// magX_sum +=magX_mg;
-		// magY_sum +=magY_mg;
-		// magZ_sum +=magZ_mg;
-		// }
-	//average and apply hard iron offset calcuation
-	// MAG_Value.x= magX_sum / sampleNumber;
-	// MAG_Value.y= magY_sum / sampleNumber; 
-	// MAG_Value.z= magZ_sum / sampleNumber;
     MAG_Value.x= magX_mg;
 	MAG_Value.y= magY_mg;
 	MAG_Value.z= magZ_mg;
 
-	//XPRINTF("ROW MAG=%d,%d,%d\r\n",magX_raw,magY_raw,magZ_raw);
-	// print magnetometer value in milli-Gauss
-	//XPRINTF("Converted MAG=%d,%d,%d\r\n",magX_mg, magY_mg, magZ_mg);
+//	XPRINTF("ROW MAG=%d,%d,%d\r\n",magX_raw,magY_raw,magZ_raw);
+////	 print magnetometer value in milli-Gauss
+//	XPRINTF("Converted MAG=%d,%d,%d\r\n",magX_mg, magY_mg, magZ_mg);
 }
 
 static void readAcc() {
@@ -316,16 +320,6 @@ static void readAcc() {
 	accZ_raw = (int16_t)((accData[1] <<8) | accData[0]);
 	accZ_mg = (int16_t)(accZ_raw * acc_Conver_factor * 1000);
 
-	// Accumulate the readings for averaging
-	// accX_sum +=accX_mg;
-	// accY_sum +=accY_mg;
-	// accZ_sum +=accZ_mg;
-	// }
-	//#CS704 - store sensor values into the variables below
-	// ACC_Value.x= accX_sum / sampleNumber;
-	// ACC_Value.y= accY_sum / sampleNumber;
-	// ACC_Value.z= accZ_sum / sampleNumber;
-
     ACC_Value.x= accX_mg;
 	ACC_Value.y= accY_mg;
 	ACC_Value.z= accZ_mg;
@@ -342,7 +336,10 @@ static void readAcc() {
   */
 int main(void)
 {
-  
+	int16_t magX_h,magY_h;
+	int16_t currentHeading = 0;
+
+
   HAL_Init();
 
   // Configure the System clock
@@ -386,7 +383,6 @@ int main(void)
   startAcc();
 
   //***************************************************
-  //***************************************************
   //************ Initialise ends **********************
   //***************************************************
 
@@ -413,13 +409,12 @@ int main(void)
       hci_user_evt_proc();
     }
 
-    //***************************************************
+
     //***************************************************
     //***************** #CS704 **************************
     //*********** READ SENSORS & PROCESS ****************
     //***************************************************
-    //***************************************************
-    //***************************************************
+
 
     //#CS704 - ReadSensor gets set every 100ms by Timer TIM4 (TimEnvHandle)
     if(ReadSensor) {
@@ -431,11 +426,80 @@ int main(void)
 
 	//*********process sensor data*********
 
-    	COMP_Value.Steps++;
-    	COMP_Value.Heading+=5;
-    	COMP_Value.Distance+=10;
+      /* Calculate Heading */
+      magX_h = MAG_Value.x; // in milli Gauss
+      magY_h = MAG_Value.y;
 
-    	XPRINTF("Steps = %d \r\n",(int)COMP_Value.Steps);
+      //arctang calcuation and radians to degrees
+      currentHeading = (atan2(magY_h,magX_h)*180)/PI;
+
+//     Correct the heading to a range of 0 to 360 degrees
+      if (currentHeading<0){
+        currentHeading +=360;
+      }
+
+      // Initialise the initial heading if it's not set
+      if (initialHeading<0){
+        initialHeading = currentHeading;
+      }
+
+      //Calculate the relative heading with respect to the initial heading and convert to 0-360
+      int16_t relativeHeading = currentHeading - initialHeading;
+      if (relativeHeading <0){
+        relativeHeading += 360;
+      }
+
+      XPRINTF("Heading from Mag = %d degrees, Relative Heading from Mag = %d degrees\r\n", currentHeading, relativeHeading);
+
+
+
+      /* Step detection */
+
+      float accX_mg = ACC_Value.x;	// in milli-g
+      float accY_mg = ACC_Value.y;
+      float accZ_mg = ACC_Value.z;
+
+      // Detect the start of a step
+      if (!stepDetected && accZ_mg >= STEP_START_THRESHOLD){
+        XPRINTF("Step Started\r\n");
+        stepDetected = true;
+      }
+      // Detect the end of the step
+      else if (stepDetected && accZ_mg <= STEP_FINISH_THRESHOLD){
+        XPRINTF("Step ended\r\n");
+        stepDetected = false;
+        if(!stepCounted){
+          stepCount ++;
+          stepCounted = true;		// one step only counted once
+        }
+        XPRINTF("Step count: %d\r\n", stepCount);
+      }
+
+
+      /* Position calculation */
+
+      // Calculate the change in position after a step has been counted
+      if (stepCounted){
+        float stepDistance = STRIDE_LENGTH; // one step distance
+        totalDistance += stepDistance; // total distance
+
+        float positionChangeX= stepDistance * sin(relativeHeading* PI/180.0);
+        float positionChangeY= stepDistance * cos(relativeHeading* PI/180.0);
+
+        // Update the current position
+        currentPositionX += positionChangeX;
+        currentPositionY += positionChangeY;
+
+        stepCounted = false; // Reset for the next step count
+
+        // Print the total distance and current position
+        ////XPRINTF("Total Distance: %d m, Current Position: (%d, %d)\n", (int16_t)totalDistance, (int16_t)currentPositionX, (int16_t)currentPositionY);
+      }
+
+      // Store the current position and relative heading in the COMP_Value
+//      COMP_Value.x = (int16_t)currentPositionX;
+//      COMP_Value.y = (int16_t)currentPositionY;
+      COMP_Value.Heading = relativeHeading *10;
 
     }
 
@@ -530,14 +594,14 @@ void UART5_Transmit(uint8_t* BufferToWrite, uint16_t BytesToWrite) {
 
 
 /**
-  * @brief  Output Compare callback in non blocking mode 
+  * @brief  Output Compare callback in non blocking mode
   * @param  htim : TIM OC handle
   * @retval None
   */
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 {
   uint32_t uhCapture=0;
-  
+
 
 
   /* TIM1_CH4 toggling with frequency = 20 Hz */
@@ -589,12 +653,12 @@ static void SendMotionData(void)
  */
 static void InitTimers(void)
 {
-  
+
   uint32_t uwPrescalerValue;
-  
+
   /* Timer Output Compare Configuration Structure declaration */
   TIM_OC_InitTypeDef sConfig;
-  
+
   /* Compute the prescaler value to have TIM4 counter clock equal to 10 KHz Hz */
 
  // #CS704 -  change TIM4 configuration here to change frequency of execution of *** READ Sensor and Process Block **
@@ -613,10 +677,10 @@ static void InitTimers(void)
 
 
   /* Compute the prescaler value to have TIM1 counter clock equal to 10 KHz */
-  uwPrescalerValue = (uint32_t) ((SystemCoreClock / 10000) - 1); 
-  
+  uwPrescalerValue = (uint32_t) ((SystemCoreClock / 10000) - 1);
+
   /* Set TIM1 instance ( Motion ) */
-  TimCCHandle.Instance = TIM1;  
+  TimCCHandle.Instance = TIM1;
   TimCCHandle.Init.Period        = 65535;
   TimCCHandle.Init.Prescaler     = uwPrescalerValue;
   TimCCHandle.Init.ClockDivision = 0;
@@ -626,7 +690,7 @@ static void InitTimers(void)
     /* Initialization Error */
     Error_Handler();
   }
-  
+
  /* Configure the Output Compare channels */
  /* Common configuration for all channels */
   sConfig.OCMode     = TIM_OCMODE_TOGGLE;
@@ -1025,7 +1089,7 @@ static void Init_BlueNRG_Stack(void)
   uint8_t  data_len_out;
   uint8_t  hwVersion;
   uint16_t fwVersion;
-  
+
 
 
 //  for(int i=0; i<7; i++)
@@ -1033,29 +1097,29 @@ static void Init_BlueNRG_Stack(void)
 
   for(int i=0; i<7; i++)
     BoardName[i]= customName[i];
-  
+
   BoardName[7]= 0;
-  
+
   /* Initialize the BlueNRG SPI driver */
   hci_init(HCI_Event_CB, NULL);
 
   /* get the BlueNRG HW and FW versions */
   getBlueNRGVersion(&hwVersion, &fwVersion);
-  
+
   aci_hal_read_config_data(CONFIG_DATA_RANDOM_ADDRESS, 6, &data_len_out, bdaddr);
 
   if ((bdaddr[5] & 0xC0) != 0xC0) {
     XPRINTF("\r\nStatic Random address not well formed.\r\n");
     while(1);
   }
-  
+
   ret = aci_hal_write_config_data(CONFIG_DATA_PUBADDR_OFFSET, data_len_out,
                                   bdaddr);
-  
+
 /* Sw reset of the device */
   hci_reset();
 
-  ret = aci_gatt_init();    
+  ret = aci_gatt_init();
   if(ret){
      XPRINTF("\r\nGATT_Init failed\r\n");
      goto fail;
@@ -1114,7 +1178,7 @@ fail:
 static void Init_BlueNRG_Custom_Services(void)
 {
   int ret;
-  
+
   ret = Add_HW_SW_ServW2ST_Service();
   if(ret == BLE_STATUS_SUCCESS)
   {
@@ -1129,7 +1193,7 @@ static void Init_BlueNRG_Custom_Services(void)
 
 /**
   * @brief  System Clock Configuration
-  *         The system Clock is configured as follow : 
+  *         The system Clock is configured as follow :
   *            System Clock source            = PLL (MSI)
   *            SYSCLK(Hz)                     = 80000000
   *            HCLK(Hz)                       = 80000000
@@ -1151,20 +1215,20 @@ static void SystemClock_Config(void)
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  
+
   __HAL_RCC_PWR_CLK_ENABLE();
   HAL_PWR_EnableBkUpAccess();
-  
+
   /* Enable the LSE Oscilator */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK){
     while(1);
   }
-  
+
   /* Enable the CSS interrupt in case LSE signal is corrupted or not present */
   HAL_RCCEx_DisableLSECSS();
-  
+
   /* Enable MSI Oscillator and activate PLL with MSI as source */
   RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.MSIState            = RCC_MSI_ON;
@@ -1180,23 +1244,23 @@ static void SystemClock_Config(void)
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK){
     while(1);
   }
-  
+
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
   PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
   if(HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     while(1);
   }
-  
+
   /* Enable MSI Auto-calibration through LSE */
   HAL_RCCEx_EnableMSIPLLMode();
-  
+
   /* Select MSI output as USB clock source */
 //  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB;
 //  PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_MSI;
 //  HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct);
-  
-  /* Select PLL as system clock source and configure the HCLK, PCLK1 and PCLK2 
+
+  /* Select PLL as system clock source and configure the HCLK, PCLK1 and PCLK2
   clocks dividers */
   RCC_ClkInitStruct.ClockType = (RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2);
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -1214,7 +1278,7 @@ static void SystemClock_Config(void)
 
 
 /**
-  * @brief This function provides accurate delay (in milliseconds) based 
+  * @brief This function provides accurate delay (in milliseconds) based
   *        on variable incremented.
   * @note This is a user implementation using WFI state
   * @param Delay: specifies the delay time length, in milliseconds.
@@ -1247,9 +1311,9 @@ void Error_Handler(void)
  * @retval None
  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{  
+{
   switch(GPIO_Pin){
-  case HCI_TL_SPI_EXTI_PIN: 
+  case HCI_TL_SPI_EXTI_PIN:
       hci_tl_lowlevel_isr();
       HCI_ProcessEvent=1;
     break;
@@ -1269,7 +1333,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   * @retval None
   */
 void assert_failed(uint8_t* file, uint32_t line)
-{ 
+{
   /* User can add his own implementation to report the file name and line number,
      ex: ALLMEMS1_PRINTF("Wrong parameters value: file %s on line %d\r\n", file, line) */
 
@@ -1278,7 +1342,6 @@ void assert_failed(uint8_t* file, uint32_t line)
   }
 }
 #endif
-
 
 
 
