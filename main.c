@@ -76,11 +76,10 @@
 #define OUTZ_H_REG_M  0x6D
 
 
-#define PI 3.141592
-#define STEP_START_THRESHOLD 1100
-#define STEP_FINISH_THRESHOLD 900
-#define MAGNITUDE_THRESHOLD 0
-#define STRIDE_LENGTH 57
+#define pi 3.141592
+#define stepStartACC 1100
+#define stepStopACC 900
+
 
 /* Shutdown mode enabled as default for SensorTile */
 #define ENABLE_SHUT_DOWN_MODE 0
@@ -154,14 +153,14 @@ uint32_t AccCalibrationData[7];
 uint8_t  NodeName[8];
 
 static int stepCount =0;			// check for static and just int
-bool stepDetected = false;
-bool stepCounted = false;
+bool walkingState = false;
+bool orientatiaon_state=true;
 float oldAccZ =900;
-//static float currentHeading =0;
-static int16_t initialHeading = -1;
-static float totalDistance =0.0;
-static float currentPositionX = 0.0;
-static float currentPositionY = 0.0;
+//static float heading =0;
+static int16_t headingOffest;
+static int16_t totalDistance =0.0;
+static int16_t currentPositionX = 0.0;
+static int16_t currentPositionY = 0.0;
 
 UART_HandleTypeDef UartHandle;
 
@@ -336,8 +335,9 @@ static void readAcc() {
   */
 int main(void)
 {
-	int16_t magX_h,magY_h;
-	int16_t currentHeading = 0;
+	int16_t magX,magY,accZ, oneStepDis, moveX, moveY;
+	int16_t heading = 0;
+  bool risingAcc, fallingAcc
 
 
   HAL_Init();
@@ -367,8 +367,7 @@ int main(void)
   //***************** #CS704 **************************
   //************ Initialise here **********************
   //***************************************************
-  //***************************************************
-  //***************************************************
+
 
   //#CS704 - use this to set BLE Device Name
   NodeName[1] = 'G';
@@ -381,6 +380,8 @@ int main(void)
 
   startMag();
   startAcc();
+  orientatiaon_state=true;
+
 
   //***************************************************
   //************ Initialise ends **********************
@@ -409,12 +410,10 @@ int main(void)
       hci_user_evt_proc();
     }
 
-
     //***************************************************
     //***************** #CS704 **************************
     //*********** READ SENSORS & PROCESS ****************
     //***************************************************
-
 
     //#CS704 - ReadSensor gets set every 100ms by Timer TIM4 (TimEnvHandle)
     if(ReadSensor) {
@@ -426,80 +425,52 @@ int main(void)
 
 	//*********process sensor data*********
 
-      /* Calculate Heading */
-      magX_h = MAG_Value.x; // in milli Gauss
-      magY_h = MAG_Value.y;
+      magX = MAG_Value.x; // in milli Gauss
+      magY = MAG_Value.y;
+      accZ = ACC_Value.z;
 
       //arctang calcuation and radians to degrees
-      currentHeading = (atan2(magY_h,magX_h)*180)/PI;
+      heading = (atan2(magY,magX)*180)/pi;
 
-//     Correct the heading to a range of 0 to 360 degrees
-      if (currentHeading<0){
-        currentHeading +=360;
+//     convert heading between 0 to 360
+      if (heading<0){
+        heading +=360;
       }
 
-      // Initialise the initial heading if it's not set
-      if (initialHeading<0){
-        initialHeading = currentHeading;
+      // Initialise the heading offset
+      if (orientatiaon_state){
+        headingOffest = heading;
+        orientatiaon_state = false;
       }
 
-      //Calculate the relative heading with respect to the initial heading and convert to 0-360
-      int16_t relativeHeading = currentHeading - initialHeading;
+      // relative heading calculation
+      int16_t relativeHeading = heading - headingOffest;
       if (relativeHeading <0){
         relativeHeading += 360;
       }
 
-      XPRINTF("Heading from Mag = %d degrees, Relative Heading from Mag = %d degrees\r\n", currentHeading, relativeHeading);
+      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
 
 
+      //Step detection
+       risingAcc = (accZ >= stepStartACC);
+       fallingAcc = (accZ <= stepStopACC);
 
-      /* Step detection */
-
-      float accX_mg = ACC_Value.x;	// in milli-g
-      float accY_mg = ACC_Value.y;
-      float accZ_mg = ACC_Value.z;
-
-      // Detect the start of a step
-      if (!stepDetected && accZ_mg >= STEP_START_THRESHOLD){
-        XPRINTF("Step Started\r\n");
-        stepDetected = true;
+      if (!walkingState && risingAcc){
+        walkingState = true;
+        XPRINTF(" start one step \r\n");
       }
       // Detect the end of the step
-      else if (stepDetected && accZ_mg <= STEP_FINISH_THRESHOLD){
-        XPRINTF("Step ended\r\n");
-        stepDetected = false;
-        if(!stepCounted){
-          stepCount ++;
-          stepCounted = true;		// one step only counted once
-        }
+      if (walkingState && fallingAcc){
+        XPRINTF("end one step\r\n");
+        walkingState = false;
+        stepCount ++;
         XPRINTF("Step count: %d\r\n", stepCount);
       }
+      // assign to Gyroscope for bluetooth testing
+      COMP_Value.Steps= stepcount;
+      COMP_Value.Heading =relativeHeading;
 
-
-      /* Position calculation */
-
-      // Calculate the change in position after a step has been counted
-      if (stepCounted){
-        float stepDistance = STRIDE_LENGTH; // one step distance
-        totalDistance += stepDistance; // total distance
-
-        float positionChangeX= stepDistance * sin(relativeHeading* PI/180.0);
-        float positionChangeY= stepDistance * cos(relativeHeading* PI/180.0);
-
-        // Update the current position
-        currentPositionX += positionChangeX;
-        currentPositionY += positionChangeY;
-
-        stepCounted = false; // Reset for the next step count
-
-        // Print the total distance and current position
-        ////XPRINTF("Total Distance: %d m, Current Position: (%d, %d)\n", (int16_t)totalDistance, (int16_t)currentPositionX, (int16_t)currentPositionY);
-      }
-
-      // Store the current position and relative heading in the COMP_Value
-//      COMP_Value.x = (int16_t)currentPositionX;
-//      COMP_Value.y = (int16_t)currentPositionY;
-      COMP_Value.Heading = relativeHeading *10;
 
     }
 
