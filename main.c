@@ -77,8 +77,9 @@
 
 
 #define pi 3.141592
-#define stepStartACC 1100
-#define stepStopACC 900
+// threshold of step
+#define stepStartACC 1150
+#define stepStopACC 800
 
 
 /* Shutdown mode enabled as default for SensorTile */
@@ -155,12 +156,8 @@ uint8_t  NodeName[8];
 static int stepCount =0;			// check for static and just int
 bool walkingState = false;
 bool orientatiaon_state=true;
-float oldAccZ =900;
 //static float heading =0;
 static int16_t headingOffest;
-static int16_t totalDistance =0.0;
-static int16_t currentPositionX = 0.0;
-static int16_t currentPositionY = 0.0;
 
 UART_HandleTypeDef UartHandle;
 
@@ -298,7 +295,6 @@ static void readAcc() {
   uint8_t dataReadyBit = 0x08;
 	do {
 		BSP_LSM303AGR_ReadReg_Acc(STATUS_REG_A,&accStatus,1);
-		//XPRINTF("WAITING");
 	} while (!(accStatus & dataReadyBit));
 
 	// for (int i=0; i<sampleNumber; i++){
@@ -335,9 +331,9 @@ static void readAcc() {
   */
 int main(void)
 {
-	int16_t magX,magY,accZ, oneStepDis, moveX, moveY;
+	int16_t magX,magY,accZ;
 	int16_t heading = 0;
-  bool risingAcc, fallingAcc
+  bool risingAcc, fallingAcc;
 
 
   HAL_Init();
@@ -449,27 +445,28 @@ int main(void)
         relativeHeading += 360;
       }
 
-      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
+//      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
 
 
       //Step detection
        risingAcc = (accZ >= stepStartACC);
        fallingAcc = (accZ <= stepStopACC);
+       XPRINTF("%d \r\n",accZ);
 
       if (!walkingState && risingAcc){
         walkingState = true;
-        XPRINTF(" start one step \r\n");
+//        XPRINTF(" start one step \r\n");
       }
       // Detect the end of the step
       if (walkingState && fallingAcc){
-        XPRINTF("end one step\r\n");
+//        XPRINTF("end one step\r\n");
         walkingState = false;
         stepCount ++;
-        XPRINTF("Step count: %d\r\n", stepCount);
+//        XPRINTF("Step count: %d\r\n", stepCount);
       }
       // assign to Gyroscope for bluetooth testing
-      COMP_Value.Steps= stepcount;
-      COMP_Value.Heading =relativeHeading;
+      COMP_Value.Steps= stepCount;
+//      COMP_Value.Heading =relativeHeading;
 
 
     }
