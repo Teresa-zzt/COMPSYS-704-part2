@@ -156,6 +156,7 @@ uint8_t  NodeName[8];
 static int stepCount =0;			// check for static and just int
 bool walkingState = false;
 bool orientatiaon_state=true;
+bool MAG_limitation=true;
 //static float heading =0;
 static int16_t headingOffest;
 
@@ -175,7 +176,43 @@ typedef struct  {
 }COMP_Data;
 BSP_MOTION_SENSOR_Axes_t ACC_Value;
 COMP_Data COMP_Value;
+// to convert from float to int
+typedef struct {
+	int32_t x;
+	int32_t y;
+    int32_t z;
+} MAG_raw;
+
+MAG_raw MAG_raw_data;
+
+typedef struct {
+	int32_t x;
+	int32_t y;
+    int32_t z;
+} MAG_convert;
+
+MAG_convert MAG_calibrate;
 BSP_MOTION_SENSOR_Axes_t MAG_Value;
+// Min/max
+
+static float mag_x_min =  32767.0f;
+static float mag_y_min =  32767.0f;
+static float mag_z_min =  32767.0f;
+static float mag_x_max = -32768.0f;
+static float mag_y_max = -32768.0f;
+static float mag_z_max = -32768.0f;
+
+static float offest_MagX = 0.0f;
+static float offest_MagY = 0.0f;
+static float offest_MagZ = 0.0f;
+static float scaleFact_MagX  = 1.0f;
+static float scaleFact_MagY  = 1.0f;
+static float scaleFact_MagZ  = 1.0f;
+
+static float f_MAG_X = 0.0f;
+static float f_MAG_Y = 0.0f;
+static float f_MAG_Z = 0.0f;
+
 /* Private function prototypes -----------------------------------------------*/
 static void SystemClock_Config(void);
 
@@ -201,6 +238,23 @@ void LSM303AGR_SPI_Read(SPI_HandleTypeDef* xSpiHandle, uint8_t *val);
 void LSM303AGR_SPI_Write(SPI_HandleTypeDef* xSpiHandle, uint8_t val);
 
 
+void printFloat(const char *label, float value)
+ {
+     int int_part = (int)value;
+     int frac_part = (int)(fabsf(value - int_part) * 100.0f + 0.5f); // round to 2 decimals
+
+     // Handle negative numbers correctly
+     if (value < 0 && int_part == 0){
+         XPRINTF("%s -0.%02d\r\n", label, frac_part);
+
+     }
+     else{
+         XPRINTF("%s %d.%02d\r\n", label, int_part, frac_part);
+
+     }
+ }
+
+
 static void InitLSM() {
 	uint8_t inData[10];
 	//setup CS pins on all SPI devices
@@ -220,18 +274,6 @@ static void InitLSM() {
 }
 
 
-static void startMag() {
-	uint8_t inData[10];
-	// Follow the self test process
-	inData[0] = 0x8C; //10001100
-	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_A_M,inData,1);
-	// Set the data rate for the Magnetometer
-	inData[0] = 0x03; //00000011
-	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_B_M,inData,1);
-	// Set the device to single conversion mode and enable BDU
-	inData[0] = 0x10; //00010000
-	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_C_M,inData,1);
-}
 
 static void startAcc() {
 	uint8_t inData[10];
@@ -248,6 +290,20 @@ static void startAcc() {
 	inData[0] = 0x57; //01010111
 	BSP_LSM303AGR_WriteReg_Acc(CTRL_REG1_A,inData,1);
 }
+
+static void startMag() {
+	uint8_t inData[10];
+	// Follow the self test process
+	inData[0] = 0x8C; //10001100
+	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_A_M,inData,1);
+	// Set the data rate for the Magnetometer
+	inData[0] = 0x03; //00000011
+	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_B_M,inData,1);
+	// Set the device to single conversion mode and enable BDU
+	inData[0] = 0x10; //00010000
+	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_C_M,inData,1);
+}
+
 
 static void readMag() {
 	uint8_t magStatus;
@@ -278,6 +334,10 @@ static void readMag() {
     MAG_Value.x= magX_mg;
 	MAG_Value.y= magY_mg;
 	MAG_Value.z= magZ_mg;
+ // for calibration
+	MAG_raw_data.x= magX_raw;
+	MAG_raw_data.y= magY_raw;
+	MAG_raw_data.z= magZ_raw;
 
 //	XPRINTF("ROW MAG=%d,%d,%d\r\n",magX_raw,magY_raw,magZ_raw);
 ////	 print magnetometer value in milli-Gauss
@@ -324,6 +384,97 @@ static void readAcc() {
 	//XPRINTF("Converted ACC=%d,%d,%d mg\r\n",accX_mg,accY_mg,accZ_mg);
 }
 
+
+
+static void calibrateMag(void)
+{
+    // Convert to float before math
+	 int32_t int_x = MAG_raw_data.x;
+	 int32_t int_y = MAG_raw_data.y;
+	 int32_t int_z = MAG_raw_data.z;
+
+    // Apply offset and scale
+    MAG_calibrate.x = (int_x - offest_MagX) * scaleFact_MagX;
+    MAG_calibrate.y = (int_y - offest_MagY) * scaleFact_MagY;
+    MAG_calibrate.z = (int_z - offest_MagZ) * scaleFact_MagZ;
+}
+
+//void avoidLimit(void){
+//	 int32_t int_x = MAG_raw_data.x;
+//	 int32_t int_y = MAG_raw_data.y;
+//	 if(-300<int_x<400 || -300<int_y<400){
+//		 MAG_limitation = true;
+//	 }else{
+//		 MAG_limitation = false;
+//	 }
+//}
+
+void updateMagCalibration(void)
+{
+   const float mag_norm_limit = 1000.0f;
+
+
+   float total_mag_strength = sqrtf(MAG_raw_data.x * MAG_raw_data.x +
+                          MAG_raw_data.y * MAG_raw_data.y +
+                          MAG_raw_data.z * MAG_raw_data.z);
+//   printFloat("", total_mag_strength);
+
+   if (total_mag_strength < 0.0f || total_mag_strength > mag_norm_limit) {
+       return;
+   }
+
+   float x = (int32_t)MAG_raw_data.x;
+   float y = (int32_t)MAG_raw_data.y;
+   float z = (int32_t)MAG_raw_data.z;
+
+   // --- Update min/max values safely ---
+   if (x < mag_x_min){
+	   mag_x_min = x;
+   }
+   if (x > mag_x_max ) {
+	   mag_x_max = x;
+   }
+
+   if (y < mag_y_min) {
+	   mag_y_min = y;
+   }
+   if (y > mag_y_max) {
+	   mag_y_max = y;
+   }
+
+   if (z < mag_z_min) {
+	   mag_z_min = z;
+   }
+   if (z > mag_z_max) {
+	   mag_z_max = z;
+
+   }
+   printFloat("",mag_y_min);
+//   printFloat("mag_x_max: ",mag_x_max);
+//   printFloat("mag_y_min: ",mag_y_min);
+//   printFloat("mag_y_max: ",mag_y_max);
+
+
+}
+void computeMagCalibration(void)
+{
+   if (mag_x_min > 9000 || mag_x_max < -9000) return;
+
+   float dx = (mag_x_max - mag_x_min) / 2.0f;
+   float dy = (mag_y_max - mag_y_min) / 2.0f;
+   float dz = (mag_z_max - mag_z_min) / 2.0f;
+
+   float avg = (dx + dy + dz) / 3.0f;
+
+   offest_MagX = (mag_x_max + mag_x_min) / 2.0f;
+   offest_MagY = (mag_y_max + mag_y_min) / 2.0f;
+   offest_MagZ = (mag_z_max + mag_z_min) / 2.0f;
+
+   if (dx != 0) scaleFact_MagX = avg / dx;
+   if (dy != 0) scaleFact_MagY = avg / dy;
+   if (dz != 0) scaleFact_MagZ = avg / dz;
+}
+
 /**
   * @brief  Main program
   * @param  None
@@ -332,7 +483,7 @@ static void readAcc() {
 int main(void)
 {
 	int16_t magX,magY,accZ;
-	int16_t heading = 0;
+	int32_t heading = 0;
   bool risingAcc, fallingAcc;
 
 
@@ -418,15 +569,18 @@ int main(void)
 	//*********get sensor data**********
     	readMag();
     	readAcc();
+    	updateMagCalibration();
+		computeMagCalibration();
+		calibrateMag();
 
-	//*********process sensor data*********
 
-      magX = MAG_Value.x; // in milli Gauss
-      magY = MAG_Value.y;
-      accZ = ACC_Value.z;
+		float heading_deg = atan2f(MAG_calibrate.y, MAG_calibrate.x);
+		if (heading_deg < 0)
+			heading_deg += 2.0f * pi;
+		 heading = heading_deg * 180.0f / pi;
+//        printFloat("heading= ", heading);
+//		XPRINTF("heading_deg= %d\n",heading_deg);
 
-      //arctang calcuation and radians to degrees
-      heading = (atan2(magY,magX)*180)/pi;
 
 //     convert heading between 0 to 360
       if (heading<0){
@@ -449,9 +603,10 @@ int main(void)
 
 
       //Step detection
+      accZ = ACC_Value.z;
        risingAcc = (accZ >= stepStartACC);
        fallingAcc = (accZ <= stepStopACC);
-       XPRINTF("%d \r\n",accZ);
+//       XPRINTF("%d \r\n",accZ);
 
       if (!walkingState && risingAcc){
         walkingState = true;
@@ -466,7 +621,7 @@ int main(void)
       }
       // assign to Gyroscope for bluetooth testing
       COMP_Value.Steps= stepCount;
-//      COMP_Value.Heading =relativeHeading;
+      COMP_Value.Heading =relativeHeading;
 
 
     }
