@@ -386,94 +386,88 @@ static void readAcc() {
 
 
 
-static void calibrateMag(void)
-{
-    // Convert to float before math
+
+void avoidLimit(void){
 	 int32_t int_x = MAG_raw_data.x;
 	 int32_t int_y = MAG_raw_data.y;
 	 int32_t int_z = MAG_raw_data.z;
 
-    // Apply offset and scale
-    MAG_calibrate.x = (int_x - offest_MagX) * scaleFact_MagX;
-    MAG_calibrate.y = (int_y - offest_MagY) * scaleFact_MagY;
-    MAG_calibrate.z = (int_z - offest_MagZ) * scaleFact_MagZ;
+	 if ((int_x > -300 && int_x < 400) ||
+	     (int_y > -300 && int_y < 400) ||
+	     (int_z > -300 && int_z < 400)) {
+		 MAG_limitation = true;
+	 }else{
+		 MAG_limitation = false;
+	 }
 }
 
-//void avoidLimit(void){
-//	 int32_t int_x = MAG_raw_data.x;
-//	 int32_t int_y = MAG_raw_data.y;
-//	 if(-300<int_x<400 || -300<int_y<400){
-//		 MAG_limitation = true;
-//	 }else{
-//		 MAG_limitation = false;
-//	 }
-//}
-
-void updateMagCalibration(void)
+void calibration(void)
 {
-   const float mag_norm_limit = 1000.0f;
+	avoidLimit();
+	if (MAG_limitation){
 
+	   float x = (int32_t)MAG_raw_data.x;
+	   float y = (int32_t)MAG_raw_data.y;
+	   float z = (int32_t)MAG_raw_data.z;
 
-   float total_mag_strength = sqrtf(MAG_raw_data.x * MAG_raw_data.x +
-                          MAG_raw_data.y * MAG_raw_data.y +
-                          MAG_raw_data.z * MAG_raw_data.z);
-//   printFloat("", total_mag_strength);
+	   //  update the max and min value for mag
+	   if (x < mag_x_min){
+		   mag_x_min = x;
+	   }
+	   if (x > mag_x_max ) {
+		   mag_x_max = x;
+	   }
 
-   if (total_mag_strength < 0.0f || total_mag_strength > mag_norm_limit) {
-       return;
-   }
+	   if (y < mag_y_min) {
+		   mag_y_min = y;
+	   }
+	   if (y > mag_y_max) {
+		   mag_y_max = y;
+	   }
 
-   float x = (int32_t)MAG_raw_data.x;
-   float y = (int32_t)MAG_raw_data.y;
-   float z = (int32_t)MAG_raw_data.z;
+	   if (z < mag_z_min) {
+		   mag_z_min = z;
+	   }
+	   if (z > mag_z_max) {
+		   mag_z_max = z;
 
-   // --- Update min/max values safely ---
-   if (x < mag_x_min){
-	   mag_x_min = x;
-   }
-   if (x > mag_x_max ) {
-	   mag_x_max = x;
-   }
+	   }
+//	   printFloat("",mag_z_min);
+   // apply hard-iron
+		offest_MagX = (mag_x_max + mag_x_min) / 2.0f;
+		offest_MagY = (mag_y_max + mag_y_min) / 2.0f;
+		offest_MagZ = (mag_z_max + mag_z_min) / 2.0f;
 
-   if (y < mag_y_min) {
-	   mag_y_min = y;
-   }
-   if (y > mag_y_max) {
-	   mag_y_max = y;
-   }
+	//apply soft iron
+		float dx = (mag_x_max - mag_x_min) / 2.0f;
+		float dy = (mag_y_max - mag_y_min) / 2.0f;
+		float dz = (mag_z_max - mag_z_min) / 2.0f;
+		float avg = (dx + dy + dz) / 3.0f;
 
-   if (z < mag_z_min) {
-	   mag_z_min = z;
-   }
-   if (z > mag_z_max) {
-	   mag_z_max = z;
+		if (dx != 0) {
+			scaleFact_MagX = avg / dx;
+		}
+		if (dy != 0) {
+			scaleFact_MagY = avg / dy;
+		}
+		if (dz != 0) {
+			scaleFact_MagZ = avg / dz;
+		}
 
-   }
-   printFloat("",mag_y_min);
-//   printFloat("mag_x_max: ",mag_x_max);
-//   printFloat("mag_y_min: ",mag_y_min);
-//   printFloat("mag_y_max: ",mag_y_max);
+		 int32_t int_x = MAG_raw_data.x;
+		 int32_t int_y = MAG_raw_data.y;
+		 int32_t int_z = MAG_raw_data.z;
 
+		// calculate the calibration value
+		MAG_calibrate.x = (int_x - offest_MagX) * scaleFact_MagX;
+		MAG_calibrate.y = (int_y - offest_MagY) * scaleFact_MagY;
+		MAG_calibrate.z = (int_z - offest_MagZ) * scaleFact_MagZ;
+	}else{
+		XPRINTF(" the mag value out of limitation")
+	}
 
 }
-void computeMagCalibration(void)
-{
-   if (mag_x_min > 9000 || mag_x_max < -9000) return;
 
-   float dx = (mag_x_max - mag_x_min) / 2.0f;
-   float dy = (mag_y_max - mag_y_min) / 2.0f;
-   float dz = (mag_z_max - mag_z_min) / 2.0f;
-
-   float avg = (dx + dy + dz) / 3.0f;
-
-   offest_MagX = (mag_x_max + mag_x_min) / 2.0f;
-   offest_MagY = (mag_y_max + mag_y_min) / 2.0f;
-   offest_MagZ = (mag_z_max + mag_z_min) / 2.0f;
-
-   if (dx != 0) scaleFact_MagX = avg / dx;
-   if (dy != 0) scaleFact_MagY = avg / dy;
-   if (dz != 0) scaleFact_MagZ = avg / dz;
-}
 
 /**
   * @brief  Main program
@@ -569,17 +563,15 @@ int main(void)
 	//*********get sensor data**********
     	readMag();
     	readAcc();
-    	updateMagCalibration();
-		computeMagCalibration();
-		calibrateMag();
+    	calibration();
 
 
-		float heading_deg = atan2f(MAG_calibrate.y, MAG_calibrate.x);
-		if (heading_deg < 0)
-			heading_deg += 2.0f * pi;
-		 heading = heading_deg * 180.0f / pi;
+		float heading_float = atan2f(MAG_calibrate.y, MAG_calibrate.x);
+		if (heading_float < 0)
+			heading_float += 2.0f * pi;
+		 heading = heading_float * 180.0f / pi;
 //        printFloat("heading= ", heading);
-//		XPRINTF("heading_deg= %d\n",heading_deg);
+//		XPRINTF("heading_float= %d\n",heading_float);
 
 
 //     convert heading between 0 to 360
@@ -599,7 +591,7 @@ int main(void)
         relativeHeading += 360;
       }
 
-//      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
+     // XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
 
 
       //Step detection
