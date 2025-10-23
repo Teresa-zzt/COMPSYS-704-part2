@@ -229,23 +229,6 @@ void LSM303AGR_SPI_Read(SPI_HandleTypeDef* xSpiHandle, uint8_t *val);
 void LSM303AGR_SPI_Write(SPI_HandleTypeDef* xSpiHandle, uint8_t val);
 
 
-void printFloat(const char *label, float value)
- {
-     int int_part = (int)value;
-     int frac_part = (int)(fabsf(value - int_part) * 100.0f + 0.5f); // round to 2 decimals
-
-     // Handle negative numbers correctly
-     if (value < 0 && int_part == 0){
-         XPRINTF("%s -0.%02d\r\n", label, frac_part);
-
-     }
-     else{
-         XPRINTF("%s %d.%02d\r\n", label, int_part, frac_part);
-
-     }
- }
-
-
 static void InitLSM() {
 	uint8_t inData[10];
 	//setup CS pins on all SPI devices
@@ -267,23 +250,33 @@ static void InitLSM() {
 
 
 static void startAcc() {
+  // using 10 bytes array to hold data
 	uint8_t inData[10];
+  //#CS704 - Write SPI commands to initialize Accelerometer
+  // All settings are based on datasheet recommendations - self test procedure
+  // LSM303AGR datasheet 4.1.4 accelerometer self-test page 29 (canvas provided)
 	// Reset all the settings in control register 2
-	inData[0] = 0x00;
+	inData[0] = 0x00; //00000000
 	BSP_LSM303AGR_WriteReg_Acc(CTRL_REG2_A,inData,1);
 	// Reset all the settings in control register 3
-	inData[0] = 0x00;
+	inData[0] = 0x00; //00000000
 	BSP_LSM303AGR_WriteReg_Acc(CTRL_REG3_A,inData,1);
 	// Set full-scale selection and enable high-resolution output mode
+  // Reset all the settings in control register 4
 	inData[0] = 0x81; //10000001, the bit 1 and 2 set the acc range, (00: ±2g; 01: ±4g; 10: ±8g; 11: ±16g)
 	BSP_LSM303AGR_WriteReg_Acc(CTRL_REG4_A,inData,1);
 	// Set data rate to 12.5 Hz and enable all axes
+  // Reset all the settings in control register 1
 	inData[0] = 0x57; //01010111
 	BSP_LSM303AGR_WriteReg_Acc(CTRL_REG1_A,inData,1);
 }
 
 static void startMag() {
+  // using 10 bytes array to hold data
 	uint8_t inData[10];
+  //#CS704 - Write SPI commands to initialize Magnetometer
+  // All settings are based on datasheet recommendations - self test procedure
+  // LSM303AGR datasheet 4.1.5 magnetometer self-test page 25 (canvas provided)
 	// Follow the self test process
 	inData[0] = 0x8C; //10001100
 	BSP_LSM303AGR_WriteReg_Mag(CFG_REG_A_M,inData,1);
@@ -303,33 +296,35 @@ static void readMag() {
 	int16_t magX_mg,magY_mg,magZ_mg; //in milli-Gauss
 	float mag_Conver_factor = 49.152 / 32768.0;
 
-		// check until ZYXDA bit is ready
-    uint8_t dataReadyBit = 0x08;
-		do {
-			BSP_LSM303AGR_ReadReg_Mag(STATUS_REG_M,&magStatus,1);
-		} while (!(magStatus & dataReadyBit));
-		// read for X
-		BSP_LSM303AGR_ReadReg_Mag(OUTX_L_REG_M,magData,2);
-		magX_raw = (int16_t)((magData[1] << 8) | magData[0]);
-		magX_mg = (int16_t)(magX_raw * mag_Conver_factor *1000);		// multiply by mag conversion unit in mg
+	// check until ZYXDA bit is ready
+  uint8_t dataReadyBit = 0x08;
+	do {
+		BSP_LSM303AGR_ReadReg_Mag(STATUS_REG_M,&magStatus,1);
+	} while (!(magStatus & dataReadyBit));
+	// read for X
+	BSP_LSM303AGR_ReadReg_Mag(OUTX_L_REG_M,magData,2);
+	magX_raw = (int16_t)((magData[1] << 8) | magData[0]);
+	magX_mg = (int16_t)(magX_raw * mag_Conver_factor *1000);		// multiply by mag conversion unit in mg
 
-		// read for Y
-		BSP_LSM303AGR_ReadReg_Mag(OUTY_L_REG_M,magData,2);
-		magY_raw = (int16_t)((magData[1] << 8) | magData[0]);
-		magY_mg = (int16_t)(magY_raw * mag_Conver_factor*1000);
-		// read for Z
-		BSP_LSM303AGR_ReadReg_Mag(OUTZ_L_REG_M,magData,2);
-		magZ_raw = (int16_t)((magData[1] << 8) | magData[0]);
-		magZ_mg = (int16_t)(magZ_raw * mag_Conver_factor*1000);
+	// read for Y
+	BSP_LSM303AGR_ReadReg_Mag(OUTY_L_REG_M,magData,2);
+	magY_raw = (int16_t)((magData[1] << 8) | magData[0]);
+	magY_mg = (int16_t)(magY_raw * mag_Conver_factor*1000);
+	// read for Z
+	BSP_LSM303AGR_ReadReg_Mag(OUTZ_L_REG_M,magData,2);
+	magZ_raw = (int16_t)((magData[1] << 8) | magData[0]);
+	magZ_mg = (int16_t)(magZ_raw * mag_Conver_factor*1000);
 
-    MAG_Value.x= magX_mg;
+  // store the value into global variable
+  MAG_Value.x= magX_mg;
 	MAG_Value.y= magY_mg;
 	MAG_Value.z= magZ_mg;
- // for calibration
+  // for calibration
 	MAG_raw_data.x= magX_raw;
 	MAG_raw_data.y= magY_raw;
 	MAG_raw_data.z= magZ_raw;
 
+  // for debug, uncomment if needed
 //	XPRINTF("ROW MAG=%d,%d,%d\r\n",magX_raw,magY_raw,magZ_raw);
 ////	 print magnetometer value in milli-Gauss
 //	XPRINTF("Converted MAG=%d,%d,%d\r\n",magX_mg, magY_mg, magZ_mg);
@@ -347,7 +342,6 @@ static void readAcc() {
 		BSP_LSM303AGR_ReadReg_Acc(STATUS_REG_A,&accStatus,1);
 	} while (!(accStatus & dataReadyBit));
 
-	// for (int i=0; i<sampleNumber; i++){
 	// For ACC X
 	BSP_LSM303AGR_ReadReg_Acc(OUT_X_L_A,accData,2);
 	// shift MSB to the left
@@ -365,10 +359,12 @@ static void readAcc() {
 	accZ_raw = (int16_t)((accData[1] <<8) | accData[0]);
 	accZ_mg = (int16_t)(accZ_raw * acc_Conver_factor * 1000);
 
-    ACC_Value.x= accX_mg;
+  // store the value into global variable
+  ACC_Value.x= accX_mg;
 	ACC_Value.y= accY_mg;
 	ACC_Value.z= accZ_mg;
 
+  // for debug, uncomment if needed
 	//XPRINTF("Row ACC=%d,%d,%d\r\n",accX_raw,accY_raw,accZ_raw);
 	// print accelerometer value in milli-g
 	//XPRINTF("Converted ACC=%d,%d,%d mg\r\n",accX_mg,accY_mg,accZ_mg);
@@ -377,10 +373,12 @@ static void readAcc() {
 
 
 void avoidLimit(void){
+  // check if the mag value is within the limitation
 	 int32_t int_x = MAG_raw_data.x;
 	 int32_t int_y = MAG_raw_data.y;
 //	 int32_t int_z = MAG_raw_data.z;
 
+  // if the value is within the limitation range
 	 if ((int_x > -300 && int_x < 500) ||
 	     (int_y > -300 && int_y < 500) ) {
 		 MAG_limitation = true;
@@ -412,17 +410,18 @@ void calibration(void)
 	   if (y > mag_y_max) {
 		   mag_y_max = y;
 	   }
-
-//	   printFloat("",mag_y_max);
    // apply hard-iron
+   // calculate the offest value
 		offest_MagX = (mag_x_max + mag_x_min) * 0.5f;
 		offest_MagY = (mag_y_max + mag_y_min) * 0.5f;
 
 	//apply soft iron
+  // calculate the scale factor
 		float dx = (mag_x_max - mag_x_min) * 0.5f;
 		float dy = (mag_y_max - mag_y_min) * 0.5f;
 		float avg = (dx + dy ) * 0.5f;
-
+    
+    // check for zero division
 		if (dx != 0) {
 			scaleFact_MagX = avg / dx;
 		}
@@ -487,6 +486,7 @@ int main(void)
 
 
   //#CS704 - use this to set BLE Device Name
+  // GROUP19
   NodeName[1] = 'G';
   NodeName[2] = 'R';
   NodeName[3] = 'O';
@@ -497,6 +497,7 @@ int main(void)
 
   startMag();
   startAcc();
+  // orientation initial state for initial heading offset
   orientatiaon_state=true;
 
 
@@ -537,19 +538,21 @@ int main(void)
     	ReadSensor=0;
 
 	//*********get sensor data**********
+
+      // get readings and process
     	readMag();
     	readAcc();
     	calibration();
 
-
+      // Heading calculation
+      // atan2 to get heading in radians
+      // convert to degrees
 		float heading_float = atan2f(MAG_calibrate.y, MAG_calibrate.x);
+    // set heading between 0 to 2pi
 		if (heading_float < 0)
+    // if the angle is negative, convert to positive angle
 			heading_float += 2.0f * pi;
 		 heading = heading_float * 180.0f / pi;
-//        printFloat("heading= ", heading);
-
-
-
 //     convert heading between 0 to 360
       if (heading<0){
         heading +=360;
@@ -566,7 +569,7 @@ int main(void)
       if (relativeHeading <0){
         relativeHeading += 360;
       }
-
+// debug print heading
 //      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
 
 
@@ -574,22 +577,27 @@ int main(void)
       accZ = ACC_Value.z;
        risingAcc = (accZ >= stepStartACC);
        fallingAcc = (accZ <= stepStopACC);
+       // de
 //       XPRINTF("%d \r\n",accZ);
 
       if (!walkingState && risingAcc){
         walkingState = true;
+        // debug print start of one step
 //        XPRINTF(" start one step \r\n");
       }
       // Detect the end of the step
       if (walkingState && fallingAcc){
+        // debug print end of one step
 //        XPRINTF("end one step\r\n");
         walkingState = false;
         stepCount ++;
+        // debug print step count
 //        XPRINTF("Step count: %d\r\n", stepCount);
       }
       // assign to Gyroscope for bluetooth testing
+      // comment one of them when testing independently (for a better view on the app)
       COMP_Value.Steps= stepCount;
-//      COMP_Value.Heading =relativeHeading;
+      COMP_Value.Heading =relativeHeading;
 
 
     }
