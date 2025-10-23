@@ -157,7 +157,6 @@ static int stepCount =0;			// check for static and just int
 bool walkingState = false;
 bool orientatiaon_state=true;
 bool MAG_limitation=true;
-//static float heading =0;
 static int16_t headingOffest;
 
 UART_HandleTypeDef UartHandle;
@@ -197,21 +196,13 @@ BSP_MOTION_SENSOR_Axes_t MAG_Value;
 
 static float mag_x_min =  32767.0f;
 static float mag_y_min =  32767.0f;
-static float mag_z_min =  32767.0f;
 static float mag_x_max = -32768.0f;
 static float mag_y_max = -32768.0f;
-static float mag_z_max = -32768.0f;
 
 static float offest_MagX = 0.0f;
 static float offest_MagY = 0.0f;
-static float offest_MagZ = 0.0f;
 static float scaleFact_MagX  = 1.0f;
 static float scaleFact_MagY  = 1.0f;
-static float scaleFact_MagZ  = 1.0f;
-
-static float f_MAG_X = 0.0f;
-static float f_MAG_Y = 0.0f;
-static float f_MAG_Z = 0.0f;
 
 /* Private function prototypes -----------------------------------------------*/
 static void SystemClock_Config(void);
@@ -351,8 +342,7 @@ static void readAcc() {
 	const float accFullScale = 2.0;
 	const float acc_Conver_factor = accFullScale / 32768.0;
 	int16_t accX_mg, accY_mg, accZ_mg;
-//	int16_t accX_sum, accY_sum, accZ_sum;
-  uint8_t dataReadyBit = 0x08;
+	uint8_t dataReadyBit = 0x08;
 	do {
 		BSP_LSM303AGR_ReadReg_Acc(STATUS_REG_A,&accStatus,1);
 	} while (!(accStatus & dataReadyBit));
@@ -422,23 +412,15 @@ void calibration(void)
 	   if (y > mag_y_max) {
 		   mag_y_max = y;
 	   }
-//
-//	   if (z < mag_z_min) {
-//		   mag_z_min = z;
-//	   }
-//	   if (z > mag_z_max) {
-//		   mag_z_max = z;
-//	   }
-//	   printFloat("",mag_z_max);
+
+//	   printFloat("",mag_y_max);
    // apply hard-iron
 		offest_MagX = (mag_x_max + mag_x_min) * 0.5f;
 		offest_MagY = (mag_y_max + mag_y_min) * 0.5f;
-//		offest_MagZ = (mag_z_max + mag_z_min) * 0.5f;
 
 	//apply soft iron
 		float dx = (mag_x_max - mag_x_min) * 0.5f;
 		float dy = (mag_y_max - mag_y_min) * 0.5f;
-//		float dz = (mag_z_max - mag_z_min) * 0.5f;
 		float avg = (dx + dy ) * 0.5f;
 
 		if (dx != 0) {
@@ -447,18 +429,15 @@ void calibration(void)
 		if (dy != 0) {
 			scaleFact_MagY = avg / dy;
 		}
-//		if (dz != 0) {
-//			scaleFact_MagZ = avg / dz;
-//		}
+
 
 		 int32_t int_x = MAG_raw_data.x;
 		 int32_t int_y = MAG_raw_data.y;
-//		 int32_t int_z = MAG_raw_data.z;
 
 		// calculate the calibration value
 		MAG_calibrate.x = (int_x - offest_MagX) * scaleFact_MagX;
 		MAG_calibrate.y = (int_y - offest_MagY) * scaleFact_MagY;
-//		MAG_calibrate.z = (int_z - offest_MagZ) * scaleFact_MagZ;
+
 	}else{
 		XPRINTF(" the mag value out of limitation")
 	}
@@ -473,7 +452,7 @@ void calibration(void)
   */
 int main(void)
 {
-	int16_t magX,magY,accZ;
+	int16_t accZ;
 	int32_t heading = 0;
   bool risingAcc, fallingAcc;
 
@@ -568,7 +547,7 @@ int main(void)
 			heading_float += 2.0f * pi;
 		 heading = heading_float * 180.0f / pi;
 //        printFloat("heading= ", heading);
-//		XPRINTF("heading_float= %d\n",heading_float);
+
 
 
 //     convert heading between 0 to 360
@@ -588,7 +567,7 @@ int main(void)
         relativeHeading += 360;
       }
 
-      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
+//      XPRINTF("Heading  = %d degrees, Relative Heading from offset is= %d degrees\r\n", heading, relativeHeading);
 
 
       //Step detection
@@ -610,7 +589,7 @@ int main(void)
       }
       // assign to Gyroscope for bluetooth testing
       COMP_Value.Steps= stepCount;
-      COMP_Value.Heading =relativeHeading;
+//      COMP_Value.Heading =relativeHeading;
 
 
     }
